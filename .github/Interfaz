@@ -1,0 +1,138 @@
+
+from argparse import ArgumentParser
+from simulation_engine import Simulator
+from pathlib import Path
+from base_classes import BaseMission, BaseDevice
+from time import sleep as delay
+from typing import Dict, Generator
+from storing_handling import save_records, create_folder, move_folder
+from tabulate import tabulate
+from colorama import Fore
+
+
+def add_mission(simulator: Simulator) -> None:
+    mission_name = input("Ingrese el nombre de la nueva misión: ")
+    device_type = input("Ingrese el tipo de dispositivo para la nueva misión: ")
+    device_count = int(input("Ingrese la cantidad de dispositivos para la nueva misión: "))
+
+    # Agregar la nueva misión al simulador
+    new_mission = BaseMission(name=mission_name, device_type=device_type, device_count=device_count)
+    simulator.add_mission(new_mission)
+    print(f"Se ha agregado la nueva misión: {mission_name}")
+
+
+def modify_mission(simulator: Simulator) -> None:
+    print("Lista de misiones existentes:")
+    missions = simulator.get_missions()
+    for i, mission in enumerate(missions, start=1):
+        print(f"{i}. {mission['name']}")
+
+    try:
+        selected_index = int(input("Seleccione el número de la misión que desea modificar: ")) - 1
+        selected_mission = missions[selected_index]
+
+        # Permitir al usuario cambiar la configuración de la misión seleccionada
+        new_name = input(f"Ingrese el nuevo nombre para la misión '{selected_mission['name']}': ")
+        selected_mission['name'] = new_name
+
+        print("Configuración de misión modificada correctamente.")
+    except (ValueError, IndexError):
+        print("Selección no válida. Asegúrese de ingresar un número de misión válido.")
+
+
+def delete_mission(simulator: Simulator) -> None:
+    print("Lista de misiones existentes:")
+    missions = simulator.get_missions()
+    for i, mission in enumerate(missions, start=1):
+        print(f"{i}. {mission['name']}")
+
+    try:
+        selected_index = int(input("Seleccione el número de la misión que desea eliminar: ")) - 1
+        selected_mission = missions[selected_index]
+
+        # Confirmar con el usuario antes de eliminar la misión seleccionada
+        confirmation = input(f"¿Está seguro de que desea eliminar la misión '{selected_mission['name']}'? (Sí/No): ").lower()
+        if confirmation == 'si':
+            simulator.remove_mission(selected_mission['name'])
+            print(f"Se ha eliminado la misión: {selected_mission['name']}")
+        else:
+            print("Operación cancelada.")
+    except (ValueError, IndexError):
+        print("Selección no válida. Asegúrese de ingresar un número de misión válido.")
+
+
+def run_command(args) -> None:
+    try:
+        simulator: Simulator = Simulator(config_path=args.config[0])
+
+        while True:
+            print("\nOpciones:")
+            print("1. Agregar nueva misión")
+            print("2. Modificar configuración de misión existente")
+            print("3. Eliminar misión existente")
+            print("4. Ejecutar simulador")
+            print("0. Salir")
+
+            choice = input("Seleccione una opción (0-4): ")
+
+            if choice == '1':
+                add_mission(simulator)
+            elif choice == '2':
+                modify_mission(simulator)
+            elif choice == '3':
+                delete_mission(simulator)
+            elif choice == '4':
+                execute_simulation(simulator)
+            elif choice == '0':
+                print("Saliendo...")
+                exit(0)
+            else:
+                print("Opción no válida. Por favor, seleccione una opción válida.")
+
+    except KeyboardInterrupt:
+        print("Exiting...")
+        exit(1)
+
+def execute_simulation(simulator: Simulator) -> None:
+    try:
+        while True:
+            msn: BaseMission = BaseMission(**simulator.select_mission())
+            max_devs: int = simulator.total_number_of_devices()
+            rec_per_dev: Dict[str, int] = simulator.randomly_distribute_devices(
+                mission=msn,
+                total_amount=max_devs
+            )
+            table = list(rec_per_dev.items())
+            table.append(("Total", sum(rec_per_dev.values())))
+            headers = ["Device", "Amount"]
+            print(tabulate(table, headers, tablefmt="grid"))
+            records: Generator[BaseDevice, None, None] = simulator.generate_records(dev_dist=rec_per_dev, msn=msn)
+            store_path: Path = create_folder(dev_folder_path=simulator.config.devices_folder)
+            save_records(devs=records, store_path=store_path)
+            delay(simulator.operation_interval)
+            move_folder(src=store_path, dst=simulator.config.backup_folder)
+    except KeyboardInterrupt:
+        print("Exiting simulation...")
+        exit(1)
+
+def main() -> None:
+    parser = ArgumentParser(description="Apolo-11 Simulator")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Create a 'run' subcommand
+    run_parser = subparsers.add_parser("run", help="Run the simulator")
+    run_parser.add_argument("-c", "--config", action="store", nargs=1, default="configuration.toml",
+                            required=False, help="Specify the path to the configuration file", metavar="PATH",
+                            dest="config", type=str)
+    run_parser.set_defaults(func=run_command)
+
+    args = parser.parse_args()
+
+    # Check if a subcommand was provided
+    if not hasattr(args, 'func'):
+        parser.print_help()
+    else:
+        args.func(args)
+
+if __name__ == "__main__":
+    main()
